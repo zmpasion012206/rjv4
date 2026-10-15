@@ -1,0 +1,51 @@
+name: Build RJ-Scheduler APK
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: RJ-Scheduler
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Build APK
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+
+      - name: Sign with Paul's key (if the key secrets are set up)
+        env:
+          KS_B64: ${{ secrets.KEYSTORE_BASE64 }}
+          KS_PASS: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASS: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          OUT=app/build/outputs/apk/debug
+          if [ -z "$KS_B64" ]; then
+            echo "::warning::No signing key secrets found. The APK uses GitHub's TEMPORARY key and will not install over an app signed with your own key."
+            mv $OUT/app-debug.apk $OUT/RJ-Scheduler-TEMP-KEY.apk
+            exit 0
+          fi
+          echo "$KS_B64" | base64 -d > rj.jks
+          BT=$(ls -d $ANDROID_HOME/build-tools/* | sort -V | tail -1)
+          "$BT/apksigner" sign --ks rj.jks --ks-pass env:KS_PASS \
+            --ks-key-alias "$KEY_ALIAS" --key-pass env:KEY_PASS \
+            --out $OUT/RJ-Scheduler.apk $OUT/app-debug.apk
+          rm -f rj.jks $OUT/app-debug.apk
+          "$BT/apksigner" verify --print-certs $OUT/RJ-Scheduler.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: RJ-Scheduler-apk
+          path: RJ-Scheduler/app/build/outputs/apk/debug/RJ-Scheduler*.apk
+          if-no-files-found: error
